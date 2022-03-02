@@ -4,7 +4,9 @@
 
 #include "pcg/pcg_basic.h"
 
-#define DETERMINISTIC() true
+#define DETERMINISTIC() false
+
+static const size_t c_histogramBuckets = 50;
 
 static const float c_pi = 3.14159265359f;
 
@@ -88,6 +90,54 @@ struct RNG_XSquared
     }
 };
 
+template <typename PDF>
+void MakeHistogram(const std::vector<float>& values, const char* fileName)
+{
+    // make the histogram
+    float minValue = values[0];
+    float maxValue = values[1];
+    for (float f : values)
+    {
+        minValue = std::min(minValue, f);
+        maxValue = std::max(maxValue, f);
+    }
+    std::vector<int> histogram(c_histogramBuckets, 0);
+    std::vector<float> histogramPDFs(c_histogramBuckets, 0.0f);
+    for (float f : values)
+    {
+        int bucket = int(float(c_histogramBuckets) * (f - minValue) / (maxValue - minValue));
+        bucket = std::min(bucket, int(c_histogramBuckets - 1));
+        histogram[bucket]++;
+    }
+    float pdfSum = 0.0f;
+    for (size_t index = 0; index < c_histogramBuckets; ++index)
+    {
+        float x = (float(index) + 0.5f) / float(c_histogramBuckets);
+        x = x * (maxValue - minValue) + minValue;
+        histogramPDFs[index] = PDF::PDF(x) / float(c_histogramBuckets);
+        pdfSum += histogramPDFs[index];
+    }
+    // normalize these PDF values to make a PMF
+    for (float& f : histogramPDFs)
+        f /= pdfSum;
+
+    FILE* file = nullptr;
+    fopen_s(&file, fileName, "wb");
+    fprintf(file, "\"Value\",\"Expected Count\",\"Actual Count\"\n");
+    for (size_t index = 0; index < c_histogramBuckets; ++index)
+    {
+        float x = (float(index) + 0.5f) / float(c_histogramBuckets);
+        x = x * (maxValue - minValue) + minValue;
+
+        float pdf = histogramPDFs[index];
+
+        int expectedCount = int(pdf * float(values.size()));
+
+        fprintf(file, "\"%f\",\"%i\",\"%i\"\n", x, expectedCount, histogram[index]);
+    }
+    fclose(file);
+}
+
 template <typename PDF1, typename PDF2, size_t NUM_ITEMS, size_t NUM_TESTS>
 void Test(const char* baseFileName)
 {
@@ -116,28 +166,22 @@ void Test(const char* baseFileName)
     for (Item& item : items)
         item.resampleWeight /= resampleWeightSum;
 
-    printf("%f\n", resampleWeightSum);
+    //printf("%f\n", resampleWeightSum);
 
     // Output the samples to a csv
-    {
-        FILE* file = nullptr;
+    {;
         char fileName[1024];
         sprintf_s(fileName, "out/%s.start.csv", baseFileName);
-        fopen_s(&file, fileName, "wb");
-        fprintf(file, "\"Value\",\"PDF1\",\"PDF2\"\n");
-        for (const Item& item : items)
-            fprintf(file, "\"%f\",\"%f\",\"%f\"\n", item.value, item.pdf1, item.pdf2);
-        fclose(file);
+        std::vector<float> values(items.size());
+        for (size_t i = 0; i < items.size(); ++i)
+            values[i] = items[i].value;
+        MakeHistogram<PDF1>(values, fileName);
     }
 
     // Sample the numbers using reservoir sampling, and output them to a csv
     {
-        FILE* file = nullptr;
-        char fileName[1024];
-        sprintf_s(fileName, "out/%s.end.csv", baseFileName);
-        fopen_s(&file, fileName, "wb");
-        fprintf(file, "\"Value\"\n");
         int lastPercent = -1;
+        std::vector<float> values(NUM_TESTS);
         for (size_t testIndex = 0; testIndex < NUM_TESTS; ++testIndex)
         {
             int percent = int(100.0f * float(testIndex) / float(NUM_TESTS));
@@ -159,10 +203,13 @@ void Test(const char* baseFileName)
                 if (RandomFloat01(rngpcg) < chance)
                     selectedValue = items[itemIndex].value;
             }
-            fprintf(file, "\"%f\"\n", selectedValue);
+            values[testIndex] = selectedValue;
         }
-        fclose(file);
         printf("\r100%%\n");
+
+        char fileName[1024];
+        sprintf_s(fileName, "out/%s.end.csv", baseFileName);
+        MakeHistogram<PDF2>(values, fileName);
     }
 }
 
@@ -183,11 +230,6 @@ int main(int argc, char** argv)
 }
 
 /*
-
-TODO:
-! could maybe write out the csv's as histograms already, and could have the actual pdf along side it.
-"Value","Expected Count","Actual Count"
-
 Note:
 * don't really need to normalize the resampleWeight since reservoir sampling doesn't care about it being normalized.
 */
