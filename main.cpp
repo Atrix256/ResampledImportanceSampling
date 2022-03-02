@@ -101,14 +101,22 @@ void Test(const char* baseFileName)
         float value;
         float pdf1;
         float pdf2;
+        float resampleWeight;
     };
     std::vector<Item> items(NUM_ITEMS);
+    float resampleWeightSum = 0.0f;
     for (Item& item : items)
     {
         item.value = PDF1::Generate(rng);
         item.pdf1 = PDF1::PDF(item.value);
         item.pdf2 = PDF2::PDF(item.value);
+        item.resampleWeight = item.pdf2 / item.pdf1;
+        resampleWeightSum += item.resampleWeight;
     }
+    for (Item& item : items)
+        item.resampleWeight /= resampleWeightSum;
+
+    printf("%f\n", resampleWeightSum);
 
     // Output the samples to a csv
     {
@@ -144,7 +152,7 @@ void Test(const char* baseFileName)
 
             for (size_t itemIndex = 0; itemIndex < NUM_ITEMS; ++itemIndex)
             {
-                float weight = items[itemIndex].pdf2 / items[itemIndex].pdf1;
+                float weight = items[itemIndex].resampleWeight;
                 weightSum += weight;
 
                 float chance = weight / weightSum;
@@ -178,4 +186,8 @@ int main(int argc, char** argv)
 
 TODO:
 ! could maybe write out the csv's as histograms already, and could have the actual pdf along side it.
+"Value","Expected Count","Actual Count"
+
+Note:
+* don't really need to normalize the resampleWeight since reservoir sampling doesn't care about it being normalized.
 */
